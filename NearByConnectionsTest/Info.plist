@@ -2,6 +2,20 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleIdentifier</key>
+	<string>net.harutiro.NearByConnectionsTest</string>
+	<key>CFBundleName</key>
+	<string>NearByConnectionsTest</string>
+	<key>CFBundleDisplayName</key>
+	<string>Nearby Connections Test</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleExecutable</key>
+	<string>NearByConnectionsTest</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_151081024B67._tcp</string>
@@ -12,7 +26,16 @@
 	<string>このアプリは近くのデバイスを発見し、接続するためにBluetoothが必要です。</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>このアプリは他のデバイスから発見されるためにBluetoothが必要です。</string>
-	<key>CFBundleDisplayName</key>
-	<string>Nearby Connections Test</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>このアプリは近くのデバイスを検出するために位置情報が必要です。</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>このアプリは近くのデバイスを検出するために位置情報が必要です。</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>このアプリは音声データの送受信のためにマイクアクセスが必要です（オプション）。</string>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>wifi</string>
+		<string>bluetooth-le</string>
+	</array>
 </dict>
 </plist>

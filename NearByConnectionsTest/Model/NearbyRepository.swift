@@ -1,4 +1,5 @@
 import Foundation
+import NearbyConnections
 
 protocol NearbyRepositoryCallback: AnyObject {
     func onConnectionStateChanged(state: String)
@@ -10,87 +11,223 @@ class NearbyRepository: NSObject {
     private let nickName: String
     private let serviceId: String
     private var remoteEndpointIds: Set<String> = []
-    private var isAdvertising = false
-    private var isDiscovering = false
+    
+    private var advertiser: Advertiser?
+    private var discoverer: Discoverer?
+    private var connectionManager: ConnectionManager?
     
     init(nickName: String = "harutiro",
          serviceId: String = "net.harutiro.nearbyconnectionsapitest") {
         self.nickName = nickName
         self.serviceId = serviceId
         super.init()
+        
+        self.connectionManager = ConnectionManager(
+            serviceID: serviceId,
+            strategy: .star
+        )
+        
+        setupDelegates()
+    }
+    
+    private func setupDelegates() {
+        guard let connectionManager = connectionManager else { return }
+        
+        // Advertiser初期化
+        advertiser = Advertiser(connectionManager: connectionManager)
+        advertiser?.delegate = self
+        
+        // Discoverer初期化
+        discoverer = Discoverer(connectionManager: connectionManager)
+        discoverer?.delegate = self
+        
+        // ConnectionManager デリゲート設定
+        connectionManager.delegate = self
     }
     
     func startAdvertise() {
-        isAdvertising = true
-        callback?.onConnectionStateChanged(state: "広告開始")
+        guard let advertiser = advertiser else {
+            callback?.onConnectionStateChanged(state: "Advertiser未初期化")
+            return
+        }
         
-        // シミュレーション: 2秒後に接続を模擬
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            self.simulateConnection()
+        let context = Data(nickName.utf8)
+        advertiser.startAdvertising(using: context) { [weak self] error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    self?.callback?.onConnectionStateChanged(state: "広告開始エラー: \(error.localizedDescription)")
+                } else {
+                    self?.callback?.onConnectionStateChanged(state: "広告開始成功")
+                }
+            }
         }
     }
     
     func startDiscovery() {
-        isDiscovering = true
-        callback?.onConnectionStateChanged(state: "発見開始")
+        guard let discoverer = discoverer else {
+            callback?.onConnectionStateChanged(state: "Discoverer未初期化")
+            return
+        }
         
-        // シミュレーション: 3秒後にデバイス発見を模擬
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-            self.simulateDiscovery()
+        discoverer.startDiscovery { [weak self] error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    self?.callback?.onConnectionStateChanged(state: "発見開始エラー: \(error.localizedDescription)")
+                } else {
+                    self?.callback?.onConnectionStateChanged(state: "発見開始成功")
+                }
+            }
         }
     }
     
-    func stopAdvertising() {
-        isAdvertising = false
-        callback?.onConnectionStateChanged(state: "広告停止")
-    }
-    
-    func stopDiscovery() {
-        isDiscovering = false
-        callback?.onConnectionStateChanged(state: "発見停止")
-    }
-    
-    func disconnectAll() {
-        remoteEndpointIds.removeAll()
-        isAdvertising = false
-        isDiscovering = false
-        callback?.onConnectionStateChanged(state: "全端末と切断")
-    }
-    
-    func resetAll() {
-        stopAdvertising()
-        stopDiscovery()
-        disconnectAll()
-        callback?.onConnectionStateChanged(state: "全リセット")
-    }
-    
     func sendData(text: String) {
+        guard let connectionManager = connectionManager else {
+            callback?.onConnectionStateChanged(state: "ConnectionManager未初期化")
+            return
+        }
+        
         guard !remoteEndpointIds.isEmpty else {
             callback?.onConnectionStateChanged(state: "送信先なし")
             return
         }
         
-        callback?.onConnectionStateChanged(state: "データ送信: \(remoteEndpointIds.count)台")
+        let data = Data(text.utf8)
+        let endpointIds = Array(remoteEndpointIds)
         
-        // シミュレーション: 自分に送り返す
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            self.callback?.onDataReceived(data: "エコー: \(text)", fromEndpointId: "simulator_device")
+        _ = connectionManager.send(data, to: endpointIds) { [weak self] error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    self?.callback?.onConnectionStateChanged(state: "データ送信エラー: \(error.localizedDescription)")
+                } else {
+                    self?.callback?.onConnectionStateChanged(state: "データ送信完了: \(text)")
+                }
+            }
         }
     }
     
-    // MARK: - シミュレーション用メソッド
-    private func simulateConnection() {
-        let simulatedEndpointId = "simulated_endpoint_\(Int.random(in: 1000...9999))"
-        remoteEndpointIds.insert(simulatedEndpointId)
-        callback?.onConnectionStateChanged(state: "接続成功: \(simulatedEndpointId)")
+    func disconnectAll() {
+        for endpointId in remoteEndpointIds {
+            connectionManager?.disconnect(from: endpointId)
+        }
+        remoteEndpointIds.removeAll()
+        callback?.onConnectionStateChanged(state: "全接続切断完了")
     }
     
-    private func simulateDiscovery() {
-        callback?.onConnectionStateChanged(state: "エンドポイント発見: simulated_device")
+    func resetAll() {
+        disconnectAll()
         
-        // 自動で接続シミュレーション
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-            self.simulateConnection()
+        advertiser?.stopAdvertising()
+        discoverer?.stopDiscovery()
+        
+        callback?.onConnectionStateChanged(state: "リセット完了")
+    }
+}
+
+// MARK: - AdvertiserDelegate
+extension NearbyRepository: AdvertiserDelegate {
+    func advertiser(
+        _ advertiser: Advertiser,
+        didReceiveConnectionRequestFrom endpointID: String,
+        with context: Data,
+        connectionRequestHandler: @escaping (Bool) -> Void
+    ) {
+        // 自動で接続要求を受け入れ
+        connectionRequestHandler(true)
+        callback?.onConnectionStateChanged(state: "接続要求受信: \(endpointID)")
+    }
+}
+
+// MARK: - DiscovererDelegate
+extension NearbyRepository: DiscovererDelegate {
+    func discoverer(
+        _ discoverer: Discoverer,
+        didFind endpointID: String,
+        with context: Data
+    ) {
+        // 発見したエンドポイントに自動で接続要求を送信
+        let connectionContext = Data(nickName.utf8)
+        discoverer.requestConnection(to: endpointID, using: connectionContext)
+        callback?.onConnectionStateChanged(state: "エンドポイント発見: \(endpointID)")
+    }
+    
+    func discoverer(_ discoverer: Discoverer, didLose endpointID: String) {
+        callback?.onConnectionStateChanged(state: "エンドポイント消失: \(endpointID)")
+    }
+}
+
+// MARK: - ConnectionManagerDelegate
+extension NearbyRepository: ConnectionManagerDelegate {
+    func connectionManager(
+        _ connectionManager: ConnectionManager,
+        didReceive verificationCode: String,
+        from endpointID: String,
+        verificationHandler: @escaping (Bool) -> Void
+    ) {
+        // 自動で認証を承認
+        verificationHandler(true)
+        remoteEndpointIds.insert(endpointID)
+        callback?.onConnectionStateChanged(state: "接続成功: \(endpointID)")
+    }
+    
+    func connectionManager(
+        _ connectionManager: ConnectionManager,
+        didReceive data: Data,
+        withID payloadID: PayloadID,
+        from endpointID: String
+    ) {
+        let receivedText = String(data: data, encoding: .utf8) ?? ""
+        callback?.onDataReceived(data: receivedText, fromEndpointId: endpointID)
+    }
+    
+    func connectionManager(
+        _ connectionManager: ConnectionManager,
+        didReceive stream: InputStream,
+        withID payloadID: PayloadID,
+        from endpointID: String,
+        cancellationToken token: CancellationToken
+    ) {
+        // ストリーム受信の処理（今回は使用しない）
+    }
+    
+    func connectionManager(
+        _ connectionManager: ConnectionManager,
+        didStartReceivingResourceWithID payloadID: PayloadID,
+        from endpointID: String,
+        at localURL: URL,
+        withName name: String,
+        cancellationToken token: CancellationToken
+    ) {
+        // ファイル受信の処理（今回は使用しない）
+    }
+    
+    func connectionManager(
+        _ connectionManager: ConnectionManager,
+        didReceiveTransferUpdate update: TransferUpdate,
+        from endpointID: String,
+        forPayload payloadID: PayloadID
+    ) {
+        // 転送状況の更新処理
+        // TransferUpdateの詳細処理は実際のAPIに合わせて後で実装
+        callback?.onConnectionStateChanged(state: "データ転送更新: \(endpointID)")
+    }
+    
+    func connectionManager(
+        _ connectionManager: ConnectionManager,
+        didChangeTo state: ConnectionState,
+        for endpointID: String
+    ) {
+        switch state {
+        case .connecting:
+            callback?.onConnectionStateChanged(state: "接続中: \(endpointID)")
+        case .connected:
+            callback?.onConnectionStateChanged(state: "接続完了: \(endpointID)")
+        case .disconnected:
+            remoteEndpointIds.remove(endpointID)
+            callback?.onConnectionStateChanged(state: "切断: \(endpointID)")
+        case .rejected:
+            callback?.onConnectionStateChanged(state: "接続拒否: \(endpointID)")
+        @unknown default:
+            break
         }
     }
 } 
